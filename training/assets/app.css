@@ -126,7 +126,10 @@ main{padding-block:clamp(22px,4vw,38px) 64px;display:flex;flex-direction:column;
 .card:hover .go{background:color-mix(in srgb,var(--c,var(--accent)) 7%,transparent);color:var(--c,var(--accent))}
 .card .go .ico{transition:transform .2s cubic-bezier(.2,.7,.3,1)}
 .card:hover .go .ico{transform:translateX(4px)}
-.card.is-custom .cat-tag::after{content:"추가";font-family:var(--ff-num);font-size:9px;letter-spacing:.04em;background:var(--accent-soft);color:var(--accent);padding:2px 5px;border-radius:4px}
+.card.is-custom .cat-tag::after,.card.is-edited .cat-tag::after{font-family:var(--ff-num);font-size:9px;letter-spacing:.04em;padding:2px 5px;border-radius:4px}
+.card.is-custom .cat-tag::after{content:"추가";background:var(--accent-soft);color:var(--accent)}
+.card.is-edited .cat-tag::after{content:"수정";background:var(--surface-3);color:var(--ink-2)}
+.card.is-custom.is-edited .cat-tag::after{content:"추가"}
 .card-hide{position:absolute;top:10px;right:10px;z-index:2;width:28px;height:28px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink-3);cursor:pointer;display:grid;place-items:center;opacity:0;transition:opacity .15s,color .15s,background .15s,border-color .15s}
 .grid>li:hover .card-hide,.card-hide:focus-visible{opacity:1}
 .card-hide:hover{background:var(--warn-soft);color:var(--warn);border-color:var(--warn)}

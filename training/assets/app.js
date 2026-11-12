@@ -7,11 +7,12 @@ var MODE=(root&&root.dataset.mode==="admin")?"admin":"member";
 var LSKEY="gearguide.v1", THKEY="gearguide.theme", GATEKEY="gearguide.unlocked";
 
 /* ── 저장소 ──────────────────────────── */
-var store={custom:[],video:{},hidden:[]};
+var store={custom:[],video:{},hidden:[],edits:{}};
 try{var raw=localStorage.getItem(LSKEY);if(raw){var pr=JSON.parse(raw);
   store.custom=Array.isArray(pr.custom)?pr.custom:[];
   store.video=(pr.video&&typeof pr.video==="object")?pr.video:{};
-  store.hidden=Array.isArray(pr.hidden)?pr.hidden:[];}}catch(e){}
+  store.hidden=Array.isArray(pr.hidden)?pr.hidden:[];
+  store.edits=(pr.edits&&typeof pr.edits==="object")?pr.edits:{};}}catch(e){}
 function save(){try{localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){toast("이 브라우저에 저장할 수 없습니다");}}
 
 var state={cat:"all",q:""}, lastFocus=null, resetArmed=false;
@@ -19,7 +20,16 @@ function $(s,r){return (r||document).querySelector(s);}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 function catOf(id){for(var i=0;i<CATS.length;i++){if(CATS[i].id===id)return CATS[i];}return{id:id,name:"기타",note:"",icon:""};}
 function cvar(id){return "var(--c-"+id+")";}
-function list(){return GEAR.concat(store.custom).filter(function(g){return store.hidden.indexOf(g.id)<0;});}
+function list(){
+  var base=GEAR.map(function(g){
+    var e=store.edits[g.id];
+    if(!e)return g;
+    var m={};for(var k in g)m[k]=g[k];
+    for(var j in e)m[j]=e[j];
+    m._e=true;return m;
+  });
+  return base.concat(store.custom).filter(function(g){return store.hidden.indexOf(g.id)<0;});
+}
 function videoOf(g){return store.video[g.id]||g.v||"";}
 function ytSearch(g){return "https://www.youtube.com/results?search_query="+encodeURIComponent(g.n+" 운동 방법 정자세");}
 function hostOf(u){try{return new URL(u).hostname.replace(/^www\./,"");}catch(e){return u;}}
@@ -107,7 +117,7 @@ function matches(g){
 }
 function cardHTML(g){
   var c=catOf(g.c), hasVid=!!videoOf(g);
-  return '<li><article class="card'+(g.custom?" is-custom":"")+'" data-open="'+esc(g.id)+'" style="--c:'+cvar(g.c)+'">'+
+  return '<li><article class="card'+(g.custom?" is-custom":"")+(MODE==="admin"&&g._e?" is-edited":"")+'" data-open="'+esc(g.id)+'" style="--c:'+cvar(g.c)+'">'+
     '<span class="wm">'+ico(c.icon,86,1.4)+"</span>"+
     '<span class="card-top"><span class="cat-tag">'+ico(c.icon,13)+esc(c.name)+"</span>"+
     (hasVid?'<span class="pill on">'+play(9)+"영상</span>":"")+"</span>"+
@@ -188,12 +198,17 @@ function openDetail(id){
   $("#sheetBody").innerHTML=
     '<div class="facts"><div class="fact"><div class="k">타깃 근육</div><div class="v">'+esc(g.t)+"</div></div>"+
     '<div class="fact"><div class="k">권장 세트</div><div class="v num">'+esc(g.rx)+"</div></div></div>"+
+    (MODE==="admin"?'<div class="form-act" style="justify-content:flex-start;padding-top:0">'+
+      '<button class="btn btn-primary" type="button" data-edit="'+esc(g.id)+'">내용 수정</button>'+
+      (g._e?'<button class="btn" type="button" data-revert="'+esc(g.id)+'">원래대로</button>':"")+
+      (g.custom?'<button class="btn btn-danger" type="button" data-del="'+esc(g.id)+'">삭제</button>':"")+
+      "</div>":"")+
     blk("세팅 체크",g.s)+
     (g.p&&g.p.length?'<section class="blk"><h3>동작 순서</h3><ol class="steps">'+g.p.map(function(x){return "<li>"+esc(x)+"</li>";}).join("")+"</ol></section>":"")+
     blk("코칭 큐",g.q)+
     blk("주의사항",g.w,"cautions")+
-    videoHTML(g)+
-    (MODE==="admin"&&g.custom?'<div class="form-act"><button class="btn btn-danger" type="button" data-del="'+esc(g.id)+'">이 기구 삭제</button></div>':"");
+    videoHTML(g);
+  $("#sheetBody").scrollTop=0;
   showSheet();
   return true;
 }
@@ -217,39 +232,63 @@ function panelPlain(title){
 }
 
 /* ── 관리자 기능 ─────────────────────── */
-function openAdd(catId){
-  panelPlain("기구 추가");
+function openForm(opts){
+  var g=opts.gear||null, isEdit=!!g;
+  var lines=function(a){return esc((a||[]).join("\n"));};
+  panelPlain(isEdit?"기구 수정":"기구 추가");
   $("#sheetBody").innerHTML=
-    '<p class="note">센터에만 있는 기구를 추가합니다. 여러 항목은 줄바꿈으로 구분하세요. 입력 내용은 <strong>이 브라우저에만</strong> 저장되며, 회원 모두에게 보이게 하려면 저장 후 <strong>내보내기</strong>로 전달해 주세요.</p>'+
-    '<form class="form" id="addForm">'+
+    '<p class="note">'+(isEdit
+      ? "고친 내용은 회원용 페이지에도 똑같이 보입니다. 다만 <strong>이 브라우저에만</strong> 저장되니, 모든 회원에게 반영하려면 <strong>내보내기</strong>로 전달해 주세요."
+      : "센터에만 있는 기구를 추가합니다. 여러 항목은 줄바꿈으로 구분하세요. 입력 내용은 <strong>이 브라우저에만</strong> 저장됩니다.")+"</p>"+
+    '<form class="form" id="gearForm">'+
     '<div class="form-row">'+
-    '<div class="field"><label for="f-n">기구 이름 *</label><input id="f-n" required maxlength="40" placeholder="예: 벨트 스쿼트"></div>'+
-    '<div class="field"><label for="f-c">분류 *</label><select id="f-c">'+CATS.map(function(c){return '<option value="'+c.id+'"'+(c.id===catId?" selected":"")+">"+esc(c.name)+"</option>";}).join("")+"</select></div></div>"+
+    '<div class="field"><label for="f-n">기구 이름 *</label><input id="f-n" required maxlength="40" placeholder="예: 벨트 스쿼트" value="'+esc(g?g.n:"")+'"></div>'+
+    '<div class="field"><label for="f-c">분류 *</label><select id="f-c">'+CATS.map(function(c){
+        return '<option value="'+c.id+'"'+((g?g.c:opts.cat)===c.id?" selected":"")+">"+esc(c.name)+"</option>";}).join("")+"</select></div></div>"+
     '<div class="form-row">'+
-    '<div class="field"><label for="f-en">영문 이름 <span class="hint">선택</span></label><input id="f-en" maxlength="50" placeholder="Belt Squat"></div>'+
-    '<div class="field"><label for="f-t">타깃 근육 *</label><input id="f-t" required maxlength="50" placeholder="대퇴사두 · 둔근"></div></div>'+
-    '<div class="field"><label for="f-rx">권장 세트 <span class="hint">선택</span></label><input id="f-rx" maxlength="40" placeholder="10~12회 × 3세트"></div>'+
-    '<div class="field"><label for="f-s">세팅 체크 <span class="hint">한 줄에 하나</span></label><textarea id="f-s"></textarea></div>'+
-    '<div class="field"><label for="f-p">동작 순서 <span class="hint">한 줄에 하나</span></label><textarea id="f-p"></textarea></div>'+
-    '<div class="field"><label for="f-q">코칭 큐 <span class="hint">한 줄에 하나</span></label><textarea id="f-q"></textarea></div>'+
-    '<div class="field"><label for="f-w">주의사항 <span class="hint">한 줄에 하나</span></label><textarea id="f-w"></textarea></div>'+
-    '<div class="field"><label for="f-v">영상 링크 <span class="hint">선택</span></label><input id="f-v" type="url" placeholder="https://youtu.be/..."></div>'+
-    '<div class="form-act"><button class="btn" type="button" id="cancelAdd">취소</button><button class="btn btn-primary" type="submit">추가하기</button></div></form>';
+    '<div class="field"><label for="f-en">영문 이름 <span class="hint">선택</span></label><input id="f-en" maxlength="50" placeholder="Belt Squat" value="'+esc(g?g.en:"")+'"></div>'+
+    '<div class="field"><label for="f-t">타깃 근육 *</label><input id="f-t" required maxlength="50" placeholder="대퇴사두 · 둔근" value="'+esc(g?g.t:"")+'"></div></div>'+
+    '<div class="field"><label for="f-rx">권장 세트 <span class="hint">선택</span></label><input id="f-rx" maxlength="40" placeholder="10~12회 × 3세트" value="'+esc(g?g.rx:"")+'"></div>'+
+    '<div class="field"><label for="f-s">세팅 체크 <span class="hint">한 줄에 하나</span></label><textarea id="f-s">'+(g?lines(g.s):"")+"</textarea></div>"+
+    '<div class="field"><label for="f-p">동작 순서 <span class="hint">한 줄에 하나</span></label><textarea id="f-p">'+(g?lines(g.p):"")+"</textarea></div>"+
+    '<div class="field"><label for="f-q">코칭 큐 <span class="hint">한 줄에 하나</span></label><textarea id="f-q">'+(g?lines(g.q):"")+"</textarea></div>"+
+    '<div class="field"><label for="f-w">주의사항 <span class="hint">한 줄에 하나</span></label><textarea id="f-w">'+(g?lines(g.w):"")+"</textarea></div>"+
+    (isEdit?"":'<div class="field"><label for="f-v">영상 링크 <span class="hint">선택</span></label><input id="f-v" type="url" placeholder="https://youtu.be/..."></div>')+
+    '<div class="form-act">'+
+      (isEdit&&g._e?'<button class="btn" type="button" data-revert="'+esc(g.id)+'">원래대로</button>':"")+
+      (isEdit&&g.custom?'<button class="btn btn-danger" type="button" data-del="'+esc(g.id)+'">삭제</button>':"")+
+      '<button class="btn" type="button" id="cancelForm">취소</button>'+
+      '<button class="btn btn-primary" type="submit">'+(isEdit?"저장":"추가하기")+"</button>"+
+    "</div></form>";
+  $("#sheetBody").scrollTop=0;
   showSheet();
-  $("#cancelAdd").addEventListener("click",closeSheet);
-  $("#addForm").addEventListener("submit",function(ev){
+  $("#cancelForm").addEventListener("click",function(){
+    if(isEdit){openDetail(g.id);}else{closeSheet();}
+  });
+  $("#gearForm").addEventListener("submit",function(ev){
     ev.preventDefault();
-    var lines=function(sel){return $(sel).value.split("\n").map(function(s){return s.trim();}).filter(Boolean);};
+    var rows=function(sel){return $(sel).value.split("\n").map(function(x){return x.trim();}).filter(Boolean);};
     var name=$("#f-n").value.trim();if(!name)return;
-    store.custom.push({id:"c"+Date.now().toString(36),c:$("#f-c").value,n:name,
-      en:$("#f-en").value.trim()||name,t:$("#f-t").value.trim()||"—",rx:$("#f-rx").value.trim()||"—",
-      s:lines("#f-s"),p:lines("#f-p"),q:lines("#f-q"),w:lines("#f-w"),v:$("#f-v").value.trim(),custom:true});
-    save();render();closeSheet();toast(name+" 추가됨");
+    var data={c:$("#f-c").value,n:name,en:$("#f-en").value.trim()||name,
+      t:$("#f-t").value.trim()||"—",rx:$("#f-rx").value.trim()||"—",
+      s:rows("#f-s"),p:rows("#f-p"),q:rows("#f-q"),w:rows("#f-w")};
+    if(!isEdit){
+      data.id="c"+Date.now().toString(36);data.v=$("#f-v").value.trim();data.custom=true;
+      store.custom.push(data);save();render();closeSheet();toast(name+" 추가됨");return;
+    }
+    if(g.custom){
+      for(var i=0;i<store.custom.length;i++){
+        if(store.custom[i].id===g.id){for(var k in data)store.custom[i][k]=data[k];break;}
+      }
+    }else{
+      store.edits[g.id]=data;
+    }
+    save();render();openDetail(g.id);toast("저장했습니다");
   });
   $("#f-n").focus();
 }
 function exportData(){
-  var payload=JSON.stringify({custom:store.custom,video:store.video,hidden:store.hidden},null,2);
+  var payload=JSON.stringify({custom:store.custom,video:store.video,hidden:store.hidden,edits:store.edits},null,2);
   panelPlain("내보내기");
   $("#sheetBody").innerHTML='<p class="note">아래 내용을 복사해 전달하면 회원용 페이지에 영구 반영할 수 있습니다.</p>'+
     '<div class="field"><textarea id="exp" readonly style="min-height:240px;font-family:var(--ff-num);font-size:12px"></textarea></div>'+
@@ -268,7 +307,7 @@ function exportData(){
 /* ── 이벤트 ──────────────────────────── */
 function wire(){
   document.addEventListener("click",function(e){
-    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#resetBtn,#themeBtn,#scrim,#closeBtn"):null;
+    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-edit],[data-revert],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#resetBtn,#themeBtn,#scrim,#closeBtn"):null;
     if(!t)return;
     if(t.id==="scrim"||t.id==="closeBtn"){closeSheet();return;}
     if(t.hasAttribute("data-cat")){state.cat=t.getAttribute("data-cat");render();window.scrollTo({top:0,behavior:"smooth"});return;}
@@ -276,7 +315,16 @@ function wire(){
       var id=t.getAttribute("data-open");lastFocus=t.querySelector(".go")||t;
       if((location.hash||"").slice(1)===id){openDetail(id);}else{location.hash=id;}return;
     }
-    if(t.hasAttribute("data-add")){openAdd(t.getAttribute("data-add"));return;}
+    if(t.hasAttribute("data-add")){openForm({cat:t.getAttribute("data-add")});return;}
+    if(t.hasAttribute("data-edit")){
+      var eid=t.getAttribute("data-edit"), all=list(), eg=null;
+      for(var i=0;i<all.length;i++){if(all[i].id===eid){eg=all[i];break;}}
+      if(eg)openForm({gear:eg});return;
+    }
+    if(t.hasAttribute("data-revert")){
+      var rid=t.getAttribute("data-revert");delete store.edits[rid];
+      save();render();openDetail(rid);toast("원래 내용으로 되돌렸습니다");return;
+    }
     if(t.hasAttribute("data-hide")){
       var hid=t.getAttribute("data-hide");
       if(store.hidden.indexOf(hid)<0)store.hidden.push(hid);
@@ -303,7 +351,7 @@ function wire(){
     if(t.id==="resetBtn"){
       if(!resetArmed){resetArmed=true;t.textContent="한 번 더 누르면 초기화";
         setTimeout(function(){resetArmed=false;var b=$("#resetBtn");if(b)b.textContent="변경사항 초기화";},4000);return;}
-      store={custom:[],video:{},hidden:[]};save();resetArmed=false;t.textContent="변경사항 초기화";
+      store={custom:[],video:{},hidden:[],edits:{}};save();resetArmed=false;t.textContent="변경사항 초기화";
       render();closeSheet();toast("초기화했습니다");return;
     }
     if(t.id==="themeBtn"){
