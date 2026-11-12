@@ -39,15 +39,19 @@ function loadShared(done){
 
 /* 되돌릴 수 있도록 저장 직전 상태를 최대 10개까지 보관한다 */
 function backups(){try{var a=JSON.parse(localStorage.getItem(BAKKEY));return Array.isArray(a)?a:[];}catch(e){return [];}}
-function snapshot(why){
+function snapshot(why,force){
   try{
-    var cur=localStorage.getItem(LSKEY);if(!cur)return;
+    var cur=localStorage.getItem(LSKEY);if(!cur)return false;
     var a=backups();
-    if(a.length&&a[0].d===cur)return;
+    if(a.length&&a[0].d===cur){
+      if(!force)return false;                         /* 자동 백업은 같은 내용이면 건너뛴다 */
+      if(a[0].w===why){a[0].t=Date.now();localStorage.setItem(BAKKEY,JSON.stringify(a));return true;}
+    }
     a.unshift({t:Date.now(),w:why||"자동",d:cur});
     while(a.length>BAKMAX)a.pop();
     localStorage.setItem(BAKKEY,JSON.stringify(a));
-  }catch(e){}
+    return true;
+  }catch(e){return false;}
 }
 function save(why){try{snapshot(why);localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){toast("이 브라우저에 저장할 수 없습니다");}}
 function mix(){var o={},i,k;for(i=0;i<arguments.length;i++){var x=arguments[i]||{};for(k in x)o[k]=x[k];}return o;}
@@ -62,7 +66,7 @@ function merged(){
   return {custom:cs,video:mix(shared.video,store.video),hidden:hiddenIds(),edits:mix(shared.edits,store.edits)};
 }
 
-var state={cat:"all",q:""}, lastFocus=null, resetArmed=false;
+var state={cat:"all",q:""}, lastFocus=null, resetArmed=false, bakArmed=false;
 function $(s,r){return (r||document).querySelector(s);}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 function catOf(id){for(var i=0;i<CATS.length;i++){if(CATS[i].id===id)return CATS[i];}return{id:id,name:"기타",note:"",icon:""};}
@@ -109,7 +113,8 @@ function shell(){
          '<a class="btn btn-sm" href="index.html">회원용 페이지 열기</a>'+
          '<button class="btn btn-sm" type="button" id="exportBtn">내보내기</button>'+
          '<button class="btn btn-sm" type="button" id="importBtn">가져오기</button>'+
-         '<button class="btn btn-sm" type="button" id="bakBtn">백업·복구</button>'+
+         '<button class="btn btn-sm" type="button" id="bakBtn">백업</button>'+
+         '<button class="btn btn-sm" type="button" id="recoverBtn">복구</button>'+
          '<button class="btn btn-sm" type="button" id="resetBtn">변경사항 초기화</button>'+
        "</span></div></div>";
   }
@@ -119,7 +124,7 @@ function shell(){
         : '<b>'+n+'</b>종 보유 · 정자세 가이드')+"</span>"+
      "<h1>센터 기구 도감</h1>"+
      '<p class="lede">'+(MODE==="admin"
-        ? "기구를 추가하고 영상 링크를 등록합니다. 고친 내용은 먼저 <strong>이 브라우저</strong>에 저장되고, <strong>내보내기 → overrides.json 커밋</strong>을 하면 모든 회원에게 영구 반영됩니다. 저장할 때마다 직전 상태가 자동 백업되니 <strong>백업</strong>에서 되돌릴 수 있습니다."
+        ? "기구를 추가하고 영상 링크를 등록합니다. 고친 내용은 먼저 <strong>이 브라우저</strong>에 저장되고, <strong>내보내기 → overrides.json 커밋</strong>을 하면 모든 회원에게 영구 반영됩니다. 저장할 때마다 직전 상태가 자동 백업되고, <strong>백업</strong> 버튼으로 직접 남길 수도 있습니다. 되돌릴 때는 <strong>복구</strong>를 쓰세요."
         : "잘못된 자세로 하지 않도록, 센터에 있는 기구의 <strong>세팅·동작 순서·주의사항</strong>을 정리했습니다. 궁금한 기구를 눌러보세요.")+"</p>"+
      '<div class="hero-bar">'+
        '<div class="search">'+ico(I.search,16)+'<input type="search" id="q" placeholder="기구 이름·부위로 검색 (예: 랫, 둔근)" aria-label="기구 검색" autocomplete="off"></div>'+
@@ -346,7 +351,7 @@ function download(name,text){
 }
 function importData(){
   panelPlain("가져오기");
-  $("#sheetBody").innerHTML='<p class="note">백업해 둔 <strong>overrides.json</strong> 파일을 고르거나 내용을 붙여넣으면 이 브라우저의 작업분으로 되살립니다. 지금 내용은 자동 백업되니 잘못 눌러도 <strong>백업</strong>에서 되돌릴 수 있습니다.</p>'+
+  $("#sheetBody").innerHTML='<p class="note">백업해 둔 <strong>overrides.json</strong> 파일을 고르거나 내용을 붙여넣으면 이 브라우저의 작업분으로 되살립니다. 지금 내용은 자동 백업되니 잘못 눌러도 <strong>복구</strong>에서 되돌릴 수 있습니다.</p>'+
     '<div class="field"><label for="impFile">파일 고르기</label><input id="impFile" type="file" accept="application/json,.json"></div>'+
     '<div class="field"><label for="imp">또는 붙여넣기</label><textarea id="imp" placeholder=\'{"custom":[], ...}\' style="min-height:180px;font-family:var(--ff-num);font-size:12px"></textarea></div>'+
     '<div class="form-act"><button class="btn" type="button" id="impCancel">취소</button><button class="btn btn-primary" type="button" id="impOk">되살리기</button></div>';
@@ -367,16 +372,16 @@ function importData(){
 }
 function restorePanel(){
   var a=backups();
-  panelPlain("백업에서 되돌리기");
+  panelPlain("복구");
   var rows=a.length
     ? a.map(function(b,i){
         var d=new Date(b.t), c=0;
         try{var o=JSON.parse(b.d);c=(o.custom||[]).length+Object.keys(o.edits||{}).length+Object.keys(o.video||{}).length;}catch(e){}
         return '<li class="bak"><span><b>'+d.toLocaleString("ko-KR")+'</b><br><span class="hint">'+esc(b.w)+' · 항목 '+c+'개</span></span>'+
-               '<button class="btn btn-sm" type="button" data-bak="'+i+'">되돌리기</button></li>';
+               '<button class="btn btn-sm" type="button" data-bak="'+i+'">복구</button></li>';
       }).join("")
-    : '<li class="bak"><span class="hint">아직 백업이 없습니다. 무언가를 저장하면 그때부터 쌓입니다.</span></li>';
-  $("#sheetBody").innerHTML='<p class="note">저장할 때마다 <strong>직전 상태</strong>를 최대 '+BAKMAX+'개까지 이 브라우저에 보관합니다. 되돌리기를 눌러도 지금 상태가 다시 백업되니 안전합니다.</p>'+
+    : '<li class="bak"><span class="hint">아직 백업이 없습니다. 관리자 바의 <b>백업</b>을 누르거나, 무언가를 저장하면 그때부터 쌓입니다.</span></li>';
+  $("#sheetBody").innerHTML='<p class="note">보관 중인 백업 <strong>'+a.length+'/'+BAKMAX+'개</strong>입니다. 저장할 때마다 직전 상태가 자동으로 쌓이고, <strong>백업</strong> 버튼으로 지금 상태를 직접 남길 수도 있습니다. 복구를 눌러도 지금 상태가 먼저 백업되니 안전합니다.</p>'+
     '<ul class="baklist">'+rows+"</ul>"+
     '<div class="form-act"><button class="btn btn-primary" type="button" id="bakDone">닫기</button></div>';
   showSheet();
@@ -384,9 +389,9 @@ function restorePanel(){
   $("#sheetBody").addEventListener("click",function(e){
     var t=e.target.closest?e.target.closest("[data-bak]"):null;if(!t)return;
     var b=backups()[parseInt(t.getAttribute("data-bak"),10)];if(!b)return;
-    snapshot("되돌리기 전");
+    snapshot("복구 전");
     try{norm(JSON.parse(b.d),store);}catch(err){toast("백업을 읽을 수 없습니다");return;}
-    save("되돌리기");render();closeSheet();toast("그때 상태로 되돌렸습니다");
+    save("복구");render();closeSheet();toast("그 시점으로 복구했습니다");
   });
 }
 function exportData(){
@@ -410,7 +415,7 @@ function exportData(){
 /* ── 이벤트 ──────────────────────────── */
 function wire(){
   document.addEventListener("click",function(e){
-    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-edit],[data-revert],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#importBtn,#bakBtn,#resetBtn,#themeBtn,#scrim,#closeBtn"):null;
+    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-edit],[data-revert],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#importBtn,#bakBtn,#recoverBtn,#resetBtn,#themeBtn,#scrim,#closeBtn"):null;
     if(!t)return;
     if(t.id==="scrim"||t.id==="closeBtn"){closeSheet();return;}
     if(t.hasAttribute("data-cat")){state.cat=t.getAttribute("data-cat");render();window.scrollTo({top:0,behavior:"smooth"});return;}
@@ -453,13 +458,22 @@ function wire(){
     }
     if(t.id==="exportBtn"){exportData();return;}
     if(t.id==="importBtn"){importData();return;}
-    if(t.id==="bakBtn"){restorePanel();return;}
+    if(t.id==="bakBtn"){
+      if(!bakArmed){bakArmed=true;t.textContent="한 번 더 누르면 백업";
+        setTimeout(function(){bakArmed=false;var b=$("#bakBtn");if(b)b.textContent="백업";},4000);return;}
+      bakArmed=false;t.textContent="백업";
+      try{localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){}
+      var done=snapshot("수동 백업",true);
+      toast(done?("지금 상태를 백업했습니다 · 보관 "+backups().length+"/"+BAKMAX+"개"):"백업할 수 없습니다");
+      return;
+    }
+    if(t.id==="recoverBtn"){restorePanel();return;}
     if(t.id==="resetBtn"){
       if(!resetArmed){resetArmed=true;t.textContent="한 번 더 누르면 초기화";
         setTimeout(function(){resetArmed=false;var b=$("#resetBtn");if(b)b.textContent="변경사항 초기화";},4000);return;}
       snapshot("초기화 전");
       store={custom:[],video:{},hidden:[],shown:[],edits:{}};save("초기화");resetArmed=false;t.textContent="변경사항 초기화";
-      render();closeSheet();toast("초기화했습니다 — 백업에서 되돌릴 수 있습니다");return;
+      render();closeSheet();toast("초기화했습니다 — 복구에서 되돌릴 수 있습니다");return;
     }
     if(t.id==="themeBtn"){
       var cur=document.documentElement.getAttribute("data-theme");
