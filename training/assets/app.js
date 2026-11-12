@@ -5,15 +5,62 @@
 var root=document.getElementById("app");
 var MODE=(root&&root.dataset.mode==="admin")?"admin":"member";
 var LSKEY="gearguide.v1", THKEY="gearguide.theme", GATEKEY="gearguide.unlocked";
+var BAKKEY="gearguide.v1.bak", BAKMAX=10, SHARED_URL="assets/overrides.json";
 
 /* ── 저장소 ──────────────────────────── */
-var store={custom:[],video:{},hidden:[],edits:{}};
-try{var raw=localStorage.getItem(LSKEY);if(raw){var pr=JSON.parse(raw);
-  store.custom=Array.isArray(pr.custom)?pr.custom:[];
-  store.video=(pr.video&&typeof pr.video==="object")?pr.video:{};
-  store.hidden=Array.isArray(pr.hidden)?pr.hidden:[];
-  store.edits=(pr.edits&&typeof pr.edits==="object")?pr.edits:{};}}catch(e){}
-function save(){try{localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){toast("이 브라우저에 저장할 수 없습니다");}}
+/* shared = 저장소에 커밋된 공용 데이터(assets/overrides.json). 모든 회원이 본다.
+   store  = 이 브라우저에만 있는 작업분. 내보내기로 공용에 반영한다. */
+var shared={custom:[],video:{},hidden:[],edits:{}};
+var store={custom:[],video:{},hidden:[],shown:[],edits:{}};
+function norm(p,o){
+  o.custom=Array.isArray(p.custom)?p.custom:[];
+  o.video=(p.video&&typeof p.video==="object")?p.video:{};
+  o.hidden=Array.isArray(p.hidden)?p.hidden:[];
+  o.shown=Array.isArray(p.shown)?p.shown:[];
+  o.edits=(p.edits&&typeof p.edits==="object")?p.edits:{};
+  return o;
+}
+try{var raw=localStorage.getItem(LSKEY);if(raw)norm(JSON.parse(raw),store);}catch(e){}
+
+/* 공용 데이터 읽기 — 없거나 실패해도 그냥 넘어간다 */
+function loadShared(done){
+  try{
+    var x=new XMLHttpRequest();
+    x.open("GET",SHARED_URL+"?t="+Date.now(),true);
+    x.onreadystatechange=function(){
+      if(x.readyState!==4)return;
+      if(x.status>=200&&x.status<300){try{norm(JSON.parse(x.responseText),shared);}catch(e){}}
+      done();
+    };
+    x.onerror=function(){done();};
+    x.send();
+  }catch(e){done();}
+}
+
+/* 되돌릴 수 있도록 저장 직전 상태를 최대 10개까지 보관한다 */
+function backups(){try{var a=JSON.parse(localStorage.getItem(BAKKEY));return Array.isArray(a)?a:[];}catch(e){return [];}}
+function snapshot(why){
+  try{
+    var cur=localStorage.getItem(LSKEY);if(!cur)return;
+    var a=backups();
+    if(a.length&&a[0].d===cur)return;
+    a.unshift({t:Date.now(),w:why||"자동",d:cur});
+    while(a.length>BAKMAX)a.pop();
+    localStorage.setItem(BAKKEY,JSON.stringify(a));
+  }catch(e){}
+}
+function save(why){try{snapshot(why);localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){toast("이 브라우저에 저장할 수 없습니다");}}
+function mix(){var o={},i,k;for(i=0;i<arguments.length;i++){var x=arguments[i]||{};for(k in x)o[k]=x[k];}return o;}
+function hiddenIds(){
+  var h=shared.hidden.concat(store.hidden), s=store.shown||[];
+  return h.filter(function(id){return s.indexOf(id)<0;});
+}
+/* 공용 + 로컬을 합친 최종본 — 내보내기에 그대로 쓴다 */
+function merged(){
+  var cs=[],seen={},i,a=store.custom.concat(shared.custom);
+  for(i=0;i<a.length;i++){if(a[i]&&a[i].id&&!seen[a[i].id]){seen[a[i].id]=1;cs.push(a[i]);}}
+  return {custom:cs,video:mix(shared.video,store.video),hidden:hiddenIds(),edits:mix(shared.edits,store.edits)};
+}
 
 var state={cat:"all",q:""}, lastFocus=null, resetArmed=false;
 function $(s,r){return (r||document).querySelector(s);}
@@ -21,16 +68,15 @@ function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){retur
 function catOf(id){for(var i=0;i<CATS.length;i++){if(CATS[i].id===id)return CATS[i];}return{id:id,name:"기타",note:"",icon:""};}
 function cvar(id){return "var(--c-"+id+")";}
 function list(){
+  var m=merged(), hid=m.hidden;
   var base=GEAR.map(function(g){
-    var e=store.edits[g.id];
+    var e=m.edits[g.id];
     if(!e)return g;
-    var m={};for(var k in g)m[k]=g[k];
-    for(var j in e)m[j]=e[j];
-    m._e=true;return m;
+    var o=mix(g,e);o._e=true;return o;
   });
-  return base.concat(store.custom).filter(function(g){return store.hidden.indexOf(g.id)<0;});
+  return base.concat(m.custom).filter(function(g){return hid.indexOf(g.id)<0;});
 }
-function videoOf(g){return store.video[g.id]||g.v||"";}
+function videoOf(g){return store.video[g.id]||shared.video[g.id]||g.v||"";}
 function ytSearch(g){return "https://www.youtube.com/results?search_query="+encodeURIComponent(g.n+" 운동 방법 정자세");}
 function hostOf(u){try{return new URL(u).hostname.replace(/^www\./,"");}catch(e){return u;}}
 
@@ -62,6 +108,8 @@ function shell(){
        '<span class="acts">'+
          '<a class="btn btn-sm" href="index.html">회원용 페이지 열기</a>'+
          '<button class="btn btn-sm" type="button" id="exportBtn">내보내기</button>'+
+         '<button class="btn btn-sm" type="button" id="importBtn">가져오기</button>'+
+         '<button class="btn btn-sm" type="button" id="bakBtn">백업·복구</button>'+
          '<button class="btn btn-sm" type="button" id="resetBtn">변경사항 초기화</button>'+
        "</span></div></div>";
   }
@@ -71,7 +119,7 @@ function shell(){
         : '<b>'+n+'</b>종 보유 · 정자세 가이드')+"</span>"+
      "<h1>센터 기구 도감</h1>"+
      '<p class="lede">'+(MODE==="admin"
-        ? "기구를 추가하고 영상 링크를 등록합니다. 변경 내용은 <strong>이 브라우저에만</strong> 저장되니, 회원 모두에게 반영하려면 <strong>내보내기</strong>를 눌러 전달해 주세요."
+        ? "기구를 추가하고 영상 링크를 등록합니다. 고친 내용은 먼저 <strong>이 브라우저</strong>에 저장되고, <strong>내보내기 → overrides.json 커밋</strong>을 하면 모든 회원에게 영구 반영됩니다. 저장할 때마다 직전 상태가 자동 백업되니 <strong>백업</strong>에서 되돌릴 수 있습니다."
         : "잘못된 자세로 하지 않도록, 센터에 있는 기구의 <strong>세팅·동작 순서·주의사항</strong>을 정리했습니다. 궁금한 기구를 눌러보세요.")+"</p>"+
      '<div class="hero-bar">'+
        '<div class="search">'+ico(I.search,16)+'<input type="search" id="q" placeholder="기구 이름·부위로 검색 (예: 랫, 둔근)" aria-label="기구 검색" autocomplete="off"></div>'+
@@ -287,15 +335,70 @@ function openForm(opts){
   });
   $("#f-n").focus();
 }
+function download(name,text){
+  try{
+    var b=new Blob([text],{type:"application/json;charset=utf-8"});
+    var u=URL.createObjectURL(b), a=document.createElement("a");
+    a.href=u;a.download=name;document.body.appendChild(a);a.click();
+    document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(u);},1000);
+    toast("overrides.json 을 저장했습니다");
+  }catch(e){toast("저장할 수 없습니다 — 복사해서 쓰세요");}
+}
+function importData(){
+  panelPlain("가져오기");
+  $("#sheetBody").innerHTML='<p class="note">백업해 둔 <strong>overrides.json</strong> 파일을 고르거나 내용을 붙여넣으면 이 브라우저의 작업분으로 되살립니다. 지금 내용은 자동 백업되니 잘못 눌러도 <strong>백업</strong>에서 되돌릴 수 있습니다.</p>'+
+    '<div class="field"><label for="impFile">파일 고르기</label><input id="impFile" type="file" accept="application/json,.json"></div>'+
+    '<div class="field"><label for="imp">또는 붙여넣기</label><textarea id="imp" placeholder=\'{"custom":[], ...}\' style="min-height:180px;font-family:var(--ff-num);font-size:12px"></textarea></div>'+
+    '<div class="form-act"><button class="btn" type="button" id="impCancel">취소</button><button class="btn btn-primary" type="button" id="impOk">되살리기</button></div>';
+  showSheet();
+  $("#impCancel").addEventListener("click",closeSheet);
+  $("#impFile").addEventListener("change",function(){
+    var f=this.files&&this.files[0];if(!f)return;
+    var r=new FileReader();r.onload=function(){$("#imp").value=String(r.result||"");};r.readAsText(f,"utf-8");
+  });
+  $("#impOk").addEventListener("click",function(){
+    var txt=$("#imp").value.trim();
+    if(!txt){toast("내용이 비어 있습니다");return;}
+    var p;try{p=JSON.parse(txt);}catch(e){toast("JSON 형식이 아닙니다");return;}
+    if(!p||typeof p!=="object"){toast("JSON 형식이 아닙니다");return;}
+    snapshot("가져오기 전");
+    norm(p,store);save("가져오기");render();closeSheet();toast("되살렸습니다");
+  });
+}
+function restorePanel(){
+  var a=backups();
+  panelPlain("백업에서 되돌리기");
+  var rows=a.length
+    ? a.map(function(b,i){
+        var d=new Date(b.t), c=0;
+        try{var o=JSON.parse(b.d);c=(o.custom||[]).length+Object.keys(o.edits||{}).length+Object.keys(o.video||{}).length;}catch(e){}
+        return '<li class="bak"><span><b>'+d.toLocaleString("ko-KR")+'</b><br><span class="hint">'+esc(b.w)+' · 항목 '+c+'개</span></span>'+
+               '<button class="btn btn-sm" type="button" data-bak="'+i+'">되돌리기</button></li>';
+      }).join("")
+    : '<li class="bak"><span class="hint">아직 백업이 없습니다. 무언가를 저장하면 그때부터 쌓입니다.</span></li>';
+  $("#sheetBody").innerHTML='<p class="note">저장할 때마다 <strong>직전 상태</strong>를 최대 '+BAKMAX+'개까지 이 브라우저에 보관합니다. 되돌리기를 눌러도 지금 상태가 다시 백업되니 안전합니다.</p>'+
+    '<ul class="baklist">'+rows+"</ul>"+
+    '<div class="form-act"><button class="btn btn-primary" type="button" id="bakDone">닫기</button></div>';
+  showSheet();
+  $("#bakDone").addEventListener("click",closeSheet);
+  $("#sheetBody").addEventListener("click",function(e){
+    var t=e.target.closest?e.target.closest("[data-bak]"):null;if(!t)return;
+    var b=backups()[parseInt(t.getAttribute("data-bak"),10)];if(!b)return;
+    snapshot("되돌리기 전");
+    try{norm(JSON.parse(b.d),store);}catch(err){toast("백업을 읽을 수 없습니다");return;}
+    save("되돌리기");render();closeSheet();toast("그때 상태로 되돌렸습니다");
+  });
+}
 function exportData(){
-  var payload=JSON.stringify({custom:store.custom,video:store.video,hidden:store.hidden,edits:store.edits},null,2);
+  var payload=JSON.stringify(merged(),null,2);
   panelPlain("내보내기");
-  $("#sheetBody").innerHTML='<p class="note">아래 내용을 복사해 전달하면 회원용 페이지에 영구 반영할 수 있습니다.</p>'+
+  $("#sheetBody").innerHTML='<p class="note">아래는 <strong>공용 데이터 + 이 브라우저의 작업분</strong>을 합친 최종본입니다. 파일로 저장해 저장소의 <strong>training/assets/overrides.json</strong> 에 덮어쓰고 커밋하면, 모든 회원에게 영구 반영되고 앞으로 페이지를 고쳐도 사라지지 않습니다.</p>'+
     '<div class="field"><textarea id="exp" readonly style="min-height:240px;font-family:var(--ff-num);font-size:12px"></textarea></div>'+
-    '<div class="form-act"><button class="btn" type="button" id="copyExp">복사하기</button><button class="btn btn-primary" type="button" id="doneExp">닫기</button></div>';
+    '<div class="form-act"><button class="btn" type="button" id="copyExp">복사하기</button><button class="btn" type="button" id="saveExp">파일로 저장</button><button class="btn btn-primary" type="button" id="doneExp">닫기</button></div>';
   $("#exp").value=payload;
   showSheet();
   $("#doneExp").addEventListener("click",closeSheet);
+  $("#saveExp").addEventListener("click",function(){download("overrides.json",payload);});
   $("#copyExp").addEventListener("click",function(){
     var ta=$("#exp");
     if(navigator.clipboard&&navigator.clipboard.writeText){
@@ -307,7 +410,7 @@ function exportData(){
 /* ── 이벤트 ──────────────────────────── */
 function wire(){
   document.addEventListener("click",function(e){
-    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-edit],[data-revert],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#resetBtn,#themeBtn,#scrim,#closeBtn"):null;
+    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-edit],[data-revert],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#importBtn,#bakBtn,#resetBtn,#themeBtn,#scrim,#closeBtn"):null;
     if(!t)return;
     if(t.id==="scrim"||t.id==="closeBtn"){closeSheet();return;}
     if(t.hasAttribute("data-cat")){state.cat=t.getAttribute("data-cat");render();window.scrollTo({top:0,behavior:"smooth"});return;}
@@ -328,9 +431,10 @@ function wire(){
     if(t.hasAttribute("data-hide")){
       var hid=t.getAttribute("data-hide");
       if(store.hidden.indexOf(hid)<0)store.hidden.push(hid);
-      save();render();toast("목록에서 숨겼습니다");return;
+      store.shown=(store.shown||[]).filter(function(x){return x!==hid;});
+      save("숨기기");render();toast("목록에서 숨겼습니다");return;
     }
-    if(t.id==="restoreBtn"){store.hidden=[];save();render();toast("숨긴 기구를 모두 되돌렸습니다");return;}
+    if(t.id==="restoreBtn"){store.hidden=[];store.shown=shared.hidden.slice();save("숨김 해제");render();toast("숨긴 기구를 모두 되돌렸습니다");return;}
     if(t.hasAttribute("data-savevid")){
       var vid=t.getAttribute("data-savevid"), val=$("#vidInput").value.trim();
       if(val&&!/^https?:\/\//i.test(val)){toast("http 로 시작하는 주소를 넣어 주세요");return;}
@@ -348,11 +452,14 @@ function wire(){
       delete store.video[did];save();render();closeSheet();toast("삭제했습니다");return;
     }
     if(t.id==="exportBtn"){exportData();return;}
+    if(t.id==="importBtn"){importData();return;}
+    if(t.id==="bakBtn"){restorePanel();return;}
     if(t.id==="resetBtn"){
       if(!resetArmed){resetArmed=true;t.textContent="한 번 더 누르면 초기화";
         setTimeout(function(){resetArmed=false;var b=$("#resetBtn");if(b)b.textContent="변경사항 초기화";},4000);return;}
-      store={custom:[],video:{},hidden:[],edits:{}};save();resetArmed=false;t.textContent="변경사항 초기화";
-      render();closeSheet();toast("초기화했습니다");return;
+      snapshot("초기화 전");
+      store={custom:[],video:{},hidden:[],shown:[],edits:{}};save("초기화");resetArmed=false;t.textContent="변경사항 초기화";
+      render();closeSheet();toast("초기화했습니다 — 백업에서 되돌릴 수 있습니다");return;
     }
     if(t.id==="themeBtn"){
       var cur=document.documentElement.getAttribute("data-theme");
@@ -395,6 +502,6 @@ function gate(onPass){
 
 /* ── 시작 ────────────────────────────── */
 try{var th=localStorage.getItem(THKEY);if(th==="dark"||th==="light")document.documentElement.setAttribute("data-theme",th);}catch(e){}
-function start(){shell();wire();render();syncHash();}
+function start(){loadShared(function(){shell();wire();render();syncHash();});}
 if(MODE==="admin"){gate(start);}else{start();}
 })();
