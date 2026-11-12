@@ -20,7 +20,9 @@ function norm(p,o){
   o.edits=(p.edits&&typeof p.edits==="object")?p.edits:{};
   return o;
 }
-try{var raw=localStorage.getItem(LSKEY);if(raw)norm(JSON.parse(raw),store);}catch(e){}
+/* 로컬 작업분은 관리자 화면에서만 쓴다. 회원 화면은 공용 데이터(overrides.json)만 보므로,
+   내보내기 전까지는 같은 브라우저에서도 회원에게 노출되지 않는다. */
+try{var raw=(MODE==="admin")?localStorage.getItem(LSKEY):null;if(raw)norm(JSON.parse(raw),store);}catch(e){}
 
 /* 공용 데이터 읽기 — 없거나 실패해도 그냥 넘어간다 */
 function loadShared(done){
