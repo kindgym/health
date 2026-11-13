@@ -236,3 +236,11 @@ footer .wrap{padding-block:22px calc(26px + env(safe-area-inset-bottom,0px));dis
   padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
 .baklist .bak b{font-family:var(--ff-num);font-size:13px;font-weight:500}
 .baklist .bak .hint{font-size:11px}
+
+/* ── 반영 상태 표시 ──────────────────── */
+.adminbar .pub{font-weight:500;letter-spacing:0}
+.adminbar .pub-ok{color:#7BE0A3}
+.adminbar .pub-wait{color:#F6CE63}
+.adminbar .pub-busy{color:#9CCBFF}
+.adminbar .pub-err{color:#FF9B9B}
+.adminbar .pub-off{opacity:.62}

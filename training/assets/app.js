@@ -6,6 +6,9 @@ var root=document.getElementById("app");
 var MODE=(root&&root.dataset.mode==="admin")?"admin":"member";
 var LSKEY="gearguide.v1", THKEY="gearguide.theme", GATEKEY="gearguide.unlocked";
 var BAKKEY="gearguide.v1.bak", BAKMAX=10, SHARED_URL="assets/overrides.json";
+var GHKEY="gearguide.gh", GH_API="https://api.github.com", PUB_DELAY=3000;
+var GH_DEF={owner:"kindgym",repo:"health",branches:"ccr-12536f69-yho4t5, main",
+            path:"training/assets/overrides.json",token:""};
 
 /* ── 저장소 ──────────────────────────── */
 /* shared = 저장소에 커밋된 공용 데이터(assets/overrides.json). 모든 회원이 본다.
@@ -32,6 +35,7 @@ function loadShared(done){
     x.onreadystatechange=function(){
       if(x.readyState!==4)return;
       if(x.status>=200&&x.status<300){try{norm(JSON.parse(x.responseText),shared);}catch(e){}}
+      pubLast=payloadOf(shared);
       done();
     };
     x.onerror=function(){done();};
@@ -55,17 +59,143 @@ function snapshot(why,force){
     return true;
   }catch(e){return false;}
 }
-function save(why){try{snapshot(why);localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){toast("이 브라우저에 저장할 수 없습니다");}}
+function save(why){try{snapshot(why);localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){toast("이 브라우저에 저장할 수 없습니다");}schedulePublish();}
 function mix(){var o={},i,k;for(i=0;i<arguments.length;i++){var x=arguments[i]||{};for(k in x)o[k]=x[k];}return o;}
 function hiddenIds(){
   var h=shared.hidden.concat(store.hidden), s=store.shown||[];
   return h.filter(function(id){return s.indexOf(id)<0;});
 }
 /* 공용 + 로컬을 합친 최종본 — 내보내기에 그대로 쓴다 */
+function isBase(id){for(var i=0;i<GEAR.length;i++){if(GEAR[i].id===id)return true;}return false;}
 function merged(){
-  var cs=[],seen={},i,a=store.custom.concat(shared.custom);
-  for(i=0;i<a.length;i++){if(a[i]&&a[i].id&&!seen[a[i].id]){seen[a[i].id]=1;cs.push(a[i]);}}
-  return {custom:cs,video:mix(shared.video,store.video),hidden:hiddenIds(),edits:mix(shared.edits,store.edits)};
+  var hid=hiddenIds(), cs=[], seen={}, i, a=store.custom.concat(shared.custom);
+  for(i=0;i<a.length;i++){
+    var g=a[i];
+    if(!g||!g.id||seen[g.id])continue;
+    seen[g.id]=1;
+    if(hid.indexOf(g.id)>=0)continue;      /* 삭제된 추가기구는 공용본에서도 빠진다 */
+    cs.push(g);
+  }
+  /* 기본 기구가 아닌 id 는 숨김 목록에 남겨둘 필요가 없다 */
+  var hb=hid.filter(isBase);
+  return {custom:cs,video:mix(shared.video,store.video),hidden:hb,edits:mix(shared.edits,store.edits)};
+}
+function payloadOf(o){return JSON.stringify({custom:o.custom,video:o.video,hidden:o.hidden,edits:o.edits},null,2);}
+
+/* ── GitHub 자동 반영 ────────────────────
+   관리자 브라우저에 저장된 토큰으로 overrides.json 을 직접 커밋한다.
+   회원 페이지에는 쓰기 경로가 아예 없으므로 읽기 전용이 구조적으로 보장된다. */
+var pubTimer=null, pubBusy=false, pubQueued=false, pubLast="", pubErr="", pubAt="";
+function ghCfg(){
+  var c={};for(var k in GH_DEF)c[k]=GH_DEF[k];
+  try{var r=localStorage.getItem(GHKEY);if(r){var p=JSON.parse(r);for(var j in p)if(p[j]!=null)c[j]=p[j];}}catch(e){}
+  return c;
+}
+function ghSave(c){try{localStorage.setItem(GHKEY,JSON.stringify(c));}catch(e){toast("설정을 저장할 수 없습니다");}}
+function ghBranches(c){return String(c.branches||"").split(",").map(function(x){return x.trim();}).filter(Boolean);}
+function b64(str){return btoa(unescape(encodeURIComponent(str)));}
+function ghX(c,method,url,body,cb){
+  try{
+    var x=new XMLHttpRequest();
+    x.open(method,url,true);
+    x.setRequestHeader("Accept","application/vnd.github+json");
+    x.setRequestHeader("Authorization","Bearer "+c.token);
+    x.setRequestHeader("X-GitHub-Api-Version","2022-11-28");
+    if(body)x.setRequestHeader("Content-Type","application/json");
+    x.onreadystatechange=function(){
+      if(x.readyState!==4)return;
+      var d=null;try{d=JSON.parse(x.responseText||"null");}catch(e){}
+      if(x.status>=200&&x.status<300)cb(null,d);
+      else cb({code:x.status,msg:(d&&d.message)||("HTTP "+x.status)});
+    };
+    x.onerror=function(){cb({code:0,msg:"네트워크 오류"});};
+    x.send(body?JSON.stringify(body):null);
+  }catch(e){cb({code:0,msg:String((e&&e.message)||e)});}
+}
+function ghUrl(c,branch){
+  return GH_API+"/repos/"+encodeURIComponent(c.owner)+"/"+encodeURIComponent(c.repo)+
+         "/contents/"+c.path.split("/").map(encodeURIComponent).join("/")+
+         (branch?("?ref="+encodeURIComponent(branch)):"");
+}
+function ghSha(c,branch,cb){
+  ghX(c,"GET",ghUrl(c,branch)+"&t="+Date.now(),null,function(err,d){
+    if(err&&err.code===404){cb(null,null);return;}    /* 파일이 없으면 새로 만든다 */
+    if(err){cb(err);return;}
+    cb(null,d&&d.sha);
+  });
+}
+function ghPut(c,branch,text,sha,cb){
+  var body={message:"기구 도감 데이터 업데이트 ("+new Date().toLocaleString("ko-KR")+")",
+            content:b64(text),branch:branch};
+  if(sha)body.sha=sha;
+  ghX(c,"PUT",ghUrl(c,null),body,cb);
+}
+function ghCommit(c,branch,text,cb){
+  ghSha(c,branch,function(e1,sha){
+    if(e1){cb(e1);return;}
+    ghPut(c,branch,text,sha,function(e2){
+      if(e2&&(e2.code===409||e2.code===422)){      /* 다른 커밋과 겹쳤으면 한 번 다시 */
+        ghSha(c,branch,function(e3,sha2){
+          if(e3){cb(e3);return;}
+          ghPut(c,branch,text,sha2,cb);
+        });
+      }else cb(e2);
+    });
+  });
+}
+function pubDirty(){return payloadOf(merged())!==pubLast;}
+function setStatus(){
+  var el=$("#pubStat");if(!el)return;
+  var c=ghCfg();
+  if(!c.token){el.textContent="GitHub 미연결 · 로컬에만 저장";el.className="pub pub-off";return;}
+  if(pubBusy){el.textContent="반영 중…";el.className="pub pub-busy";return;}
+  if(pubErr){el.textContent="반영 실패 · "+pubErr;el.className="pub pub-err";return;}
+  if(pubDirty()){el.textContent="미반영 변경 있음";el.className="pub pub-wait";return;}
+  el.textContent="반영됨"+(pubAt?(" · "+pubAt):"");el.className="pub pub-ok";
+}
+function publishNow(manual){
+  var c=ghCfg();
+  if(!c.token){if(manual)toast("먼저 GitHub 연결을 설정해 주세요");setStatus();return;}
+  if(pubBusy){pubQueued=true;return;}
+  var text=payloadOf(merged());
+  if(!manual&&text===pubLast){setStatus();return;}
+  var brs=ghBranches(c);
+  if(!brs.length){pubErr="브랜치가 비어 있음";setStatus();return;}
+  pubBusy=true;pubErr="";setStatus();
+  var i=0;
+  (function next(){
+    if(i>=brs.length){
+      pubBusy=false;pubLast=text;
+      try{norm(JSON.parse(text),shared);}catch(e){}
+      store.hidden=(store.hidden||[]).filter(isBase);   /* 삭제 처리가 끝난 id 는 비운다 */
+      try{localStorage.setItem(LSKEY,JSON.stringify(store));}catch(e){}
+      pubAt=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+      setStatus();
+      if(manual)toast("회원 페이지에 반영했습니다 ("+brs.join(", ")+")");
+      if(pubQueued){pubQueued=false;setTimeout(function(){publishNow(false);},300);}
+      return;
+    }
+    ghCommit(c,brs[i],text,function(err){
+      if(err){
+        pubBusy=false;
+        pubErr=err.code===401?"토큰이 유효하지 않음":
+               err.code===403?"권한 없음 또는 호출 제한":
+               err.code===404?"저장소·브랜치·경로를 찾을 수 없음":
+               (err.msg||"알 수 없는 오류");
+        setStatus();
+        toast("반영 실패 — "+pubErr);
+        return;
+      }
+      i++;next();
+    });
+  })();
+}
+function schedulePublish(){
+  if(MODE!=="admin")return;
+  setStatus();
+  if(!ghCfg().token)return;
+  if(pubTimer)clearTimeout(pubTimer);
+  pubTimer=setTimeout(function(){pubTimer=null;publishNow(false);},PUB_DELAY);
 }
 
 var state={cat:"all",q:""}, lastFocus=null, resetArmed=false, bakArmed=false;
@@ -110,9 +240,11 @@ function shell(){
   var n=list().length, h="";
   if(MODE==="admin"){
     h+='<div class="adminbar"><div class="wrap">'+
-       '<span class="tag"><span class="dotlive"></span>관리자 페이지 · 편집 가능</span>'+
+       '<span class="tag"><span class="dotlive"></span>관리자 · <span id="pubStat" class="pub">확인 중…</span></span>'+
        '<span class="acts">'+
          '<a class="btn btn-sm" href="index.html">회원용 페이지 열기</a>'+
+         '<button class="btn btn-sm" type="button" id="ghBtn">GitHub 연결</button>'+
+         '<button class="btn btn-sm" type="button" id="pubBtn">지금 반영</button>'+
          '<button class="btn btn-sm" type="button" id="exportBtn">내보내기</button>'+
          '<button class="btn btn-sm" type="button" id="importBtn">가져오기</button>'+
          '<button class="btn btn-sm" type="button" id="bakBtn">백업</button>'+
@@ -396,6 +528,59 @@ function restorePanel(){
     save("복구");render();closeSheet();toast("그 시점으로 복구했습니다");
   });
 }
+function ghPanel(){
+  var c=ghCfg(), has=!!c.token;
+  panelPlain("GitHub 연결");
+  $("#sheetBody").innerHTML=
+    '<p class="note">관리자가 저장하면 <strong>'+esc(c.path)+'</strong> 가 자동으로 커밋되고, 1분쯤 뒤 회원 페이지에 반영됩니다. 토큰은 <strong>이 브라우저에만</strong> 저장되며 회원 페이지로는 전달되지 않습니다.</p>'+
+    '<p class="note">토큰은 GitHub → Settings → Developer settings → <strong>Fine-grained tokens</strong> 에서 <strong>'+esc(c.owner+"/"+c.repo)+'</strong> 저장소 하나에만 <strong>Contents: Read and write</strong> 권한을 주어 만드세요. 만료일을 짧게 두고, 유출이 의심되면 같은 화면에서 폐기하면 됩니다.</p>'+
+    '<form class="form" id="ghForm">'+
+    '<div class="form-row">'+
+    '<div class="field"><label for="g-o">소유자</label><input id="g-o" value="'+esc(c.owner)+'"></div>'+
+    '<div class="field"><label for="g-r">저장소</label><input id="g-r" value="'+esc(c.repo)+'"></div></div>'+
+    '<div class="field"><label for="g-b">브랜치 <span class="hint">쉼표로 구분 · 앞쪽이 Pages 서빙 브랜치</span></label><input id="g-b" value="'+esc(c.branches)+'"></div>'+
+    '<div class="field"><label for="g-p">파일 경로</label><input id="g-p" value="'+esc(c.path)+'"></div>'+
+    '<div class="field"><label for="g-t">토큰 '+(has?'<span class="hint">이미 등록됨 — 바꿀 때만 입력</span>':'<span class="hint">github_pat_... 또는 ghp_...</span>')+'</label>'+
+      '<input id="g-t" type="password" autocomplete="off" placeholder="'+(has?"••••••••  (비워 두면 그대로 유지)":"토큰 붙여넣기")+'"></div>'+
+    '<div class="form-act">'+
+      (has?'<button class="btn btn-danger" type="button" id="ghClear">연결 해제</button>':"")+
+      '<button class="btn" type="button" id="ghTest">권한 확인</button>'+
+      '<button class="btn btn-primary" type="submit">저장</button>'+
+    "</div></form>";
+  $("#sheetBody").scrollTop=0;
+  showSheet();
+  function read(){
+    var t=$("#g-t").value.trim();
+    return {owner:$("#g-o").value.trim(),repo:$("#g-r").value.trim(),
+            branches:$("#g-b").value.trim(),path:$("#g-p").value.trim(),
+            token:t||c.token};
+  }
+  $("#ghTest").addEventListener("click",function(){
+    var v=read();
+    if(!v.token){toast("토큰을 먼저 입력해 주세요");return;}
+    var brs=ghBranches(v);
+    if(!brs.length){toast("브랜치를 입력해 주세요");return;}
+    toast("확인 중…");
+    ghSha(v,brs[0],function(err){
+      if(err){toast("확인 실패 — "+(err.code===401?"토큰이 유효하지 않습니다":err.code===403?"권한이 없습니다":err.code===404?"저장소·브랜치·경로를 찾을 수 없습니다":err.msg));return;}
+      toast(brs[0]+" 접근 확인됨");
+    });
+  });
+  if(has)$("#ghClear").addEventListener("click",function(){
+    var v=read();v.token="";ghSave(v);pubErr="";pubAt="";
+    toast("연결을 해제했습니다 — 이제 로컬에만 저장됩니다");
+    render();closeSheet();
+  });
+  $("#ghForm").addEventListener("submit",function(ev){
+    ev.preventDefault();
+    var v=read();
+    if(!v.owner||!v.repo||!v.path||!ghBranches(v).length){toast("빈 칸을 채워 주세요");return;}
+    ghSave(v);pubErr="";
+    render();closeSheet();
+    if(v.token){toast("저장했습니다 — 지금 상태를 반영합니다");publishNow(true);}
+    else toast("저장했습니다 — 토큰이 없어 로컬에만 저장됩니다");
+  });
+}
 function exportData(){
   var payload=JSON.stringify(merged(),null,2);
   panelPlain("내보내기");
@@ -417,7 +602,7 @@ function exportData(){
 /* ── 이벤트 ──────────────────────────── */
 function wire(){
   document.addEventListener("click",function(e){
-    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-edit],[data-revert],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#importBtn,#bakBtn,#recoverBtn,#resetBtn,#themeBtn,#scrim,#closeBtn"):null;
+    var t=e.target.closest?e.target.closest("[data-open],[data-hide],[data-add],[data-edit],[data-revert],[data-savevid],[data-clearvid],[data-del],[data-cat],#restoreBtn,#exportBtn,#importBtn,#bakBtn,#recoverBtn,#resetBtn,#themeBtn,#ghBtn,#pubBtn,#scrim,#closeBtn"):null;
     if(!t)return;
     if(t.id==="scrim"||t.id==="closeBtn"){closeSheet();return;}
     if(t.hasAttribute("data-cat")){state.cat=t.getAttribute("data-cat");render();window.scrollTo({top:0,behavior:"smooth"});return;}
@@ -456,7 +641,9 @@ function wire(){
     if(t.hasAttribute("data-del")){
       var did=t.getAttribute("data-del");
       store.custom=store.custom.filter(function(x){return x.id!==did;});
-      delete store.video[did];save();render();closeSheet();toast("삭제했습니다");return;
+      if(store.hidden.indexOf(did)<0)store.hidden.push(did);   /* 공용본에 있던 것도 지운다 */
+      store.shown=(store.shown||[]).filter(function(x){return x!==did;});
+      delete store.video[did];save("삭제");render();closeSheet();toast("삭제했습니다");return;
     }
     if(t.id==="exportBtn"){exportData();return;}
     if(t.id==="importBtn"){importData();return;}
@@ -470,6 +657,8 @@ function wire(){
       return;
     }
     if(t.id==="recoverBtn"){restorePanel();return;}
+    if(t.id==="ghBtn"){ghPanel();return;}
+    if(t.id==="pubBtn"){if(pubTimer){clearTimeout(pubTimer);pubTimer=null;}publishNow(true);return;}
     if(t.id==="resetBtn"){
       if(!resetArmed){resetArmed=true;t.textContent="한 번 더 누르면 초기화";
         setTimeout(function(){resetArmed=false;var b=$("#resetBtn");if(b)b.textContent="변경사항 초기화";},4000);return;}
@@ -518,6 +707,20 @@ function gate(onPass){
 
 /* ── 시작 ────────────────────────────── */
 try{var th=localStorage.getItem(THKEY);if(th==="dark"||th==="light")document.documentElement.setAttribute("data-theme",th);}catch(e){}
-function start(){loadShared(function(){shell();wire();render();syncHash();});}
+function start(){
+  loadShared(function(){
+    shell();wire();render();syncHash();
+    if(MODE==="admin"){setStatus();schedulePublish();}
+    else{
+      /* 회원 화면은 1분마다 공용 데이터를 다시 보고, 바뀌었으면 조용히 갱신한다 */
+      setInterval(function(){
+        var sheet=$("#sheet");
+        if(sheet&&!sheet.hidden)return;
+        var before=payloadOf(shared);
+        loadShared(function(){if(payloadOf(shared)!==before)render();});
+      },60000);
+    }
+  });
+}
 if(MODE==="admin"){gate(start);}else{start();}
 })();
