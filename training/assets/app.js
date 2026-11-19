@@ -551,7 +551,7 @@ function ghPanel(){
     '<div class="field"><label for="g-p">파일 경로</label><input id="g-p" value="'+esc(c.path)+'"></div>'+
     '<div class="field"><label for="g-t">토큰 '+(has?'<span class="hint">이미 등록됨 — 바꿀 때만 입력</span>':'<span class="hint">github_pat_... 또는 ghp_...</span>')+'</label>'+
       '<input id="g-t" type="password" autocomplete="off" placeholder="'+(has?"••••••••  (비워 두면 그대로 유지)":"토큰 붙여넣기")+'"></div>'+
-    '<p class="note" id="ghTestOut">아래 <strong>권한 확인</strong>을 먼저 눌러 보세요. 토큰·권한·브랜치를 한 번에 점검합니다.</p>'+
+    '<p class="note" id="ghTestOut"><strong>권한 확인</strong>은 지금 내용을 실제로 한 번 커밋해 봅니다. 읽기만 해서는 쓰기 권한이 있는지 알 수 없기 때문입니다.</p>'+
     '<div class="form-act">'+
       (has?'<button class="btn btn-danger" type="button" id="ghClear">연결 해제</button>':"")+
       '<button class="btn" type="button" id="ghTest">권한 확인</button>'+
@@ -583,19 +583,26 @@ function ghPanel(){
           (e1.msg||("오류 "+e1.code))));
         return;
       }
-      var canPush=!!(d&&d.permissions&&d.permissions.push);
-      if(!canPush){
-        say('<b class="bad">읽기 전용 토큰입니다.</b> 토큰 권한에서 <strong>Contents: Read and write</strong> 로 다시 발급해 주세요. 지금 상태로는 저장은 되지만 회원에게 반영되지 않습니다.');
-        return;
-      }
-      ghSha(v,brs[0],function(e2){
+      /* d.permissions 는 토큰이 아니라 로그인한 사용자의 역할이라 믿을 수 없다.
+         공개 저장소는 권한이 없어도 읽히므로, 실제로 한 번 써 봐야 알 수 있다. */
+      say("읽기 확인됨 · 쓰기 시도 중…");
+      ghCommit(v,brs[0],payloadOf(merged()),function(e2){
         if(e2){
-          say('<b class="bad">실패</b> — '+esc(
-            e2.code===404?("브랜치 ‘"+brs[0]+"’ 또는 경로 ‘"+v.path+"’ 를 찾을 수 없습니다."):
-            (e2.msg||("오류 "+e2.code))));
+          say('<b class="bad">쓰기 실패</b> — '+esc(e2.msg||("오류 "+e2.code))+'<br>'+(
+            e2.code===403
+              ? "읽기는 되지만 <strong>쓰기 권한이 없습니다</strong>. 이 저장소는 공개라 권한이 없어도 읽기는 되니, 읽기가 된다고 권한이 있는 것은 아닙니다.<br>확인할 것: ① 토큰의 <strong>Resource owner 가 ‘"+esc(v.owner)+"’ 조직</strong>인지 ② <strong>Contents: Read and write</strong> 인지 ③ 조직이 fine-grained 토큰을 허용하고 승인했는지.<br>셋 다 번거로우면 <strong>classic 토큰(repo 스코프)</strong>이 가장 확실합니다."
+            : e2.code===401 ? "토큰이 유효하지 않습니다. 복사가 잘렸는지 확인하세요."
+            : e2.code===404 ? "브랜치 ‘"+esc(brs[0])+"’ 또는 경로 ‘"+esc(v.path)+"’ 를 찾을 수 없습니다."
+            : ""));
           return;
         }
-        say('<b class="good">확인됨</b> — 쓰기 권한 있음, 브랜치 ‘'+esc(brs[0])+'’ 접근 가능. 저장을 누르면 반영이 시작됩니다.');
+        /* 실제로 커밋됐으므로 반영 상태를 갱신한다 */
+        var text=payloadOf(merged());
+        pubLast=text;try{norm(JSON.parse(text),shared);}catch(e){}
+        pubErr="";pubAt=new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+        setStatus();
+        say('<b class="good">쓰기까지 성공</b> — 브랜치 ‘'+esc(brs[0])+'’ 에 방금 실제로 커밋했습니다. 1분쯤 뒤 회원 페이지에 반영됩니다.'+
+            (brs.length>1?' 나머지 브랜치('+esc(brs.slice(1).join(", "))+')까지 맞추려면 <strong>저장</strong>을 누르세요.':''));
       });
     });
   });
