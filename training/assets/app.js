@@ -258,7 +258,9 @@ function shell(){
         : '<b>'+n+'</b>종 보유 · 정자세 가이드')+"</span>"+
      "<h1>센터 기구 도감</h1>"+
      '<p class="lede">'+(MODE==="admin"
-        ? "기구를 추가하고 영상 링크를 등록합니다. 고친 내용은 먼저 <strong>이 브라우저</strong>에 저장되고, <strong>내보내기 → overrides.json 커밋</strong>을 하면 모든 회원에게 영구 반영됩니다. 저장할 때마다 직전 상태가 자동 백업되고, <strong>백업</strong> 버튼으로 직접 남길 수도 있습니다. 되돌릴 때는 <strong>복구</strong>를 쓰세요."
+        ? (ghCfg().token
+            ? "기구를 추가하고 영상 링크를 등록합니다. 저장하면 몇 초 뒤 <strong>자동으로 커밋</strong>되고, 1분쯤 뒤 회원 모두에게 반영됩니다. 진행 상태는 맨 위 표시줄에서 확인하세요. 저장할 때마다 직전 상태가 자동 백업되니, 되돌릴 때는 <strong>복구</strong>를 쓰세요."
+            : "기구를 추가하고 영상 링크를 등록합니다. 지금은 <strong>GitHub 에 연결되지 않아</strong> 고친 내용이 이 브라우저에만 저장됩니다. 회원에게 반영하려면 맨 위 <strong>GitHub 연결</strong>을 설정하세요. 저장할 때마다 직전 상태가 자동 백업되니, 되돌릴 때는 <strong>복구</strong>를 쓰세요.")
         : "잘못된 자세로 하지 않도록, 센터에 있는 기구의 <strong>세팅·동작 순서·주의사항</strong>을 정리했습니다. 궁금한 기구를 눌러보세요.")+"</p>"+
      '<div class="hero-bar">'+
        '<div class="search">'+ico(I.search,16)+'<input type="search" id="q" placeholder="기구 이름·부위로 검색 (예: 랫, 둔근)" aria-label="기구 검색" autocomplete="off"></div>'+
