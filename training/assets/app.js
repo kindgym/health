@@ -178,10 +178,12 @@ function publishNow(manual){
     ghCommit(c,brs[i],text,function(err){
       if(err){
         pubBusy=false;
-        pubErr=err.code===401?"토큰이 유효하지 않음":
-               err.code===403?"권한 없음 또는 호출 제한":
-               err.code===404?"저장소·브랜치·경로를 찾을 수 없음":
-               (err.msg||"알 수 없는 오류");
+        pubErr=(err.code===401?"토큰이 유효하지 않음":
+                err.code===403?"쓰기 권한 없음":
+                err.code===404?"저장소·브랜치·경로를 찾을 수 없음":
+                err.code===422?"요청이 거부됨":
+                err.code===0?"네트워크 오류":("오류 "+err.code))+
+               (err.msg?(" — "+err.msg):"");
         setStatus();
         toast("반영 실패 — "+pubErr);
         return;
@@ -235,6 +237,13 @@ function toast(msg){
   document.body.appendChild(t);setTimeout(function(){t.remove();},2600);
 }
 
+function ledeText(){
+  return ghCfg().token
+    ? "기구를 추가하고 영상 링크를 등록합니다. 저장하면 몇 초 뒤 <strong>자동으로 커밋</strong>되고, 1분쯤 뒤 회원 모두에게 반영됩니다. 진행 상태는 맨 위 표시줄에서 확인하세요. 저장할 때마다 직전 상태가 자동 백업되니, 되돌릴 때는 <strong>복구</strong>를 쓰세요."
+    : "기구를 추가하고 영상 링크를 등록합니다. 지금은 <strong>GitHub 에 연결되지 않아</strong> 고친 내용이 이 브라우저에만 저장됩니다. 회원에게 반영하려면 맨 위 <strong>GitHub 연결</strong>을 설정하세요. 저장할 때마다 직전 상태가 자동 백업되니, 되돌릴 때는 <strong>복구</strong>를 쓰세요.";
+}
+function setLede(){var el=$("#lede");if(el&&MODE==="admin")el.innerHTML=ledeText();}
+
 /* ── 화면 뼈대 ───────────────────────── */
 function shell(){
   var n=list().length, h="";
@@ -257,10 +266,8 @@ function shell(){
         ? '<b>ADMIN</b> · 기구 · 영상 관리'
         : '<b>'+n+'</b>종 보유 · 정자세 가이드')+"</span>"+
      "<h1>센터 기구 도감</h1>"+
-     '<p class="lede">'+(MODE==="admin"
-        ? (ghCfg().token
-            ? "기구를 추가하고 영상 링크를 등록합니다. 저장하면 몇 초 뒤 <strong>자동으로 커밋</strong>되고, 1분쯤 뒤 회원 모두에게 반영됩니다. 진행 상태는 맨 위 표시줄에서 확인하세요. 저장할 때마다 직전 상태가 자동 백업되니, 되돌릴 때는 <strong>복구</strong>를 쓰세요."
-            : "기구를 추가하고 영상 링크를 등록합니다. 지금은 <strong>GitHub 에 연결되지 않아</strong> 고친 내용이 이 브라우저에만 저장됩니다. 회원에게 반영하려면 맨 위 <strong>GitHub 연결</strong>을 설정하세요. 저장할 때마다 직전 상태가 자동 백업되니, 되돌릴 때는 <strong>복구</strong>를 쓰세요.")
+     '<p class="lede" id="lede">'+(MODE==="admin"
+        ? ledeText()
         : "잘못된 자세로 하지 않도록, 센터에 있는 기구의 <strong>세팅·동작 순서·주의사항</strong>을 정리했습니다. 궁금한 기구를 눌러보세요.")+"</p>"+
      '<div class="hero-bar">'+
        '<div class="search">'+ico(I.search,16)+'<input type="search" id="q" placeholder="기구 이름·부위로 검색 (예: 랫, 둔근)" aria-label="기구 검색" autocomplete="off"></div>'+
@@ -544,6 +551,7 @@ function ghPanel(){
     '<div class="field"><label for="g-p">파일 경로</label><input id="g-p" value="'+esc(c.path)+'"></div>'+
     '<div class="field"><label for="g-t">토큰 '+(has?'<span class="hint">이미 등록됨 — 바꿀 때만 입력</span>':'<span class="hint">github_pat_... 또는 ghp_...</span>')+'</label>'+
       '<input id="g-t" type="password" autocomplete="off" placeholder="'+(has?"••••••••  (비워 두면 그대로 유지)":"토큰 붙여넣기")+'"></div>'+
+    '<p class="note" id="ghTestOut">아래 <strong>권한 확인</strong>을 먼저 눌러 보세요. 토큰·권한·브랜치를 한 번에 점검합니다.</p>'+
     '<div class="form-act">'+
       (has?'<button class="btn btn-danger" type="button" id="ghClear">연결 해제</button>':"")+
       '<button class="btn" type="button" id="ghTest">권한 확인</button>'+
@@ -562,23 +570,46 @@ function ghPanel(){
     if(!v.token){toast("토큰을 먼저 입력해 주세요");return;}
     var brs=ghBranches(v);
     if(!brs.length){toast("브랜치를 입력해 주세요");return;}
-    toast("확인 중…");
-    ghSha(v,brs[0],function(err){
-      if(err){toast("확인 실패 — "+(err.code===401?"토큰이 유효하지 않습니다":err.code===403?"권한이 없습니다":err.code===404?"저장소·브랜치·경로를 찾을 수 없습니다":err.msg));return;}
-      toast(brs[0]+" 접근 확인됨");
+    var out=$("#ghTestOut");
+    function say(t){if(out){out.innerHTML=t;}}
+    say("확인 중…");
+    /* 저장소 권한부터 본다 — 읽기 전용 토큰은 여기서 걸러진다 */
+    ghX(v,"GET",GH_API+"/repos/"+encodeURIComponent(v.owner)+"/"+encodeURIComponent(v.repo)+"?t="+Date.now(),null,function(e1,d){
+      if(e1){
+        say('<b class="bad">실패</b> — '+esc(
+          e1.code===401?"토큰이 유효하지 않습니다. 복사가 잘렸는지 확인하세요.":
+          e1.code===403?"이 토큰은 "+v.owner+"/"+v.repo+" 에 접근할 수 없습니다. 토큰을 만들 때 Resource owner 를 ‘"+v.owner+"’ 조직으로 골랐는지, 조직이 fine-grained 토큰을 승인했는지 확인하세요.":
+          e1.code===404?"저장소를 찾을 수 없습니다. 소유자·저장소 이름을 확인하세요.":
+          (e1.msg||("오류 "+e1.code))));
+        return;
+      }
+      var canPush=!!(d&&d.permissions&&d.permissions.push);
+      if(!canPush){
+        say('<b class="bad">읽기 전용 토큰입니다.</b> 토큰 권한에서 <strong>Contents: Read and write</strong> 로 다시 발급해 주세요. 지금 상태로는 저장은 되지만 회원에게 반영되지 않습니다.');
+        return;
+      }
+      ghSha(v,brs[0],function(e2){
+        if(e2){
+          say('<b class="bad">실패</b> — '+esc(
+            e2.code===404?("브랜치 ‘"+brs[0]+"’ 또는 경로 ‘"+v.path+"’ 를 찾을 수 없습니다."):
+            (e2.msg||("오류 "+e2.code))));
+          return;
+        }
+        say('<b class="good">확인됨</b> — 쓰기 권한 있음, 브랜치 ‘'+esc(brs[0])+'’ 접근 가능. 저장을 누르면 반영이 시작됩니다.');
+      });
     });
   });
   if(has)$("#ghClear").addEventListener("click",function(){
     var v=read();v.token="";ghSave(v);pubErr="";pubAt="";
     toast("연결을 해제했습니다 — 이제 로컬에만 저장됩니다");
-    render();closeSheet();
+    setLede();setStatus();render();closeSheet();
   });
   $("#ghForm").addEventListener("submit",function(ev){
     ev.preventDefault();
     var v=read();
     if(!v.owner||!v.repo||!v.path||!ghBranches(v).length){toast("빈 칸을 채워 주세요");return;}
     ghSave(v);pubErr="";
-    render();closeSheet();
+    setLede();setStatus();render();closeSheet();
     if(v.token){toast("저장했습니다 — 지금 상태를 반영합니다");publishNow(true);}
     else toast("저장했습니다 — 토큰이 없어 로컬에만 저장됩니다");
   });

@@ -244,3 +244,8 @@ footer .wrap{padding-block:22px calc(26px + env(safe-area-inset-bottom,0px));dis
 .adminbar .pub-busy{color:#9CCBFF}
 .adminbar .pub-err{color:#FF9B9B}
 .adminbar .pub-off{opacity:.62}
+#ghTestOut .good{color:#1E8E4E}
+#ghTestOut .bad{color:#C8372D}
+:root[data-theme="dark"] #ghTestOut .good,:root:not([data-theme="light"]) #ghTestOut .good{color:#7BE0A3}
+:root[data-theme="dark"] #ghTestOut .bad,:root:not([data-theme="light"]) #ghTestOut .bad{color:#FF9B9B}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]) #ghTestOut .good{color:#1E8E4E}:root:not([data-theme="dark"]) #ghTestOut .bad{color:#C8372D}}
